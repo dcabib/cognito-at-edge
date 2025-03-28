@@ -1,0 +1,83 @@
+AWSTemplateFormatVersion: 2010-09-09
+Transform:
+  - 'AWS::Serverless-2016-10-31'
+
+Outputs:
+  FrontendS3Bucket:
+    Description: "Bucket used to host website static files"
+    Value: !Ref S3Bucket
+
+Resources:
+  S3Bucket:
+      Type: AWS::S3::Bucket
+
+  S3BucketPolicy:
+    Type: "AWS::S3::BucketPolicy"
+    Properties:
+      Bucket: !Ref S3Bucket
+      PolicyDocument:
+        Statement:
+          - Action: s3:GetObject
+            Effect: Allow
+            Principal:
+              CanonicalUser: !GetAtt CloudFrontIdentity.S3CanonicalUserId
+            Resource: !Sub "arn:aws:s3:::${S3Bucket}/*"
+
+  CloudFrontIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: "Origin Access Identity for the S3 Bucket"
+
+  CloudFrontDistrib:
+    Type: "AWS::CloudFront::Distribution"
+    Properties:
+      DistributionConfig:
+        DefaultCacheBehavior :
+          ForwardedValues:
+            QueryString: false
+          LambdaFunctionAssociations:
+            - EventType: viewer-request
+              LambdaFunctionARN: !Ref EdgeAuthFunction.Version
+          TargetOriginId: S3Origin
+          ViewerProtocolPolicy: redirect-to-https
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: "/index.html"
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: "/index.html"
+        DefaultRootObject: "index.html"
+        Enabled: true
+        Origins:
+          - S3OriginConfig:
+              OriginAccessIdentity: !Join ["", ["origin-access-identity/cloudfront/", !Ref CloudFrontIdentity]]
+            DomainName: !GetAtt S3Bucket.DomainName
+            Id: S3Origin
+
+  EdgeAuthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: index.handler
+      Runtime: nodejs10.x
+      CodeUri: '.'
+      Role: !GetAtt EdgeAuthFunctionRole.Arn
+      AutoPublishAlias: LambdaAlias
+
+  EdgeAuthFunctionRole:
+    Type: "AWS::IAM::Role"
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+          - Effect: Allow
+            Principal:
+              Service: edgelambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
